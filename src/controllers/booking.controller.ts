@@ -337,6 +337,28 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: "Booking not found" });
   }
 
+  // When confirming, check for time conflicts with other confirmed bookings of the same staff
+  if (parsed.data.status === "CONFIRMED" && existing.staffId) {
+    const conflict = await prisma.booking.findFirst({
+      where: {
+        id:      { not: existing.id },
+        staffId: existing.staffId,
+        status:  { in: ["CONFIRMED", "PENDING"] },
+        AND: [
+          { startTime: { lt: existing.endTime } },
+          { endTime:   { gt: existing.startTime } },
+        ],
+      },
+      select: { id: true, customerName: true, startTime: true, endTime: true },
+    });
+    if (conflict) {
+      return res.status(409).json({
+        success: false,
+        message: `Time conflict: staff already has a booking from ${conflict.startTime.toLocaleString("en-GB")} to ${conflict.endTime.toLocaleString("en-GB")} (ID: ${conflict.id}).`,
+      });
+    }
+  }
+
   const booking = await prisma.booking.update({
     where:   { id: req.params.id },
     data:    { status: parsed.data.status },

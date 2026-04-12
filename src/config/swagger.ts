@@ -20,6 +20,7 @@ const swaggerDocument = {
     { name: "Services", description: "Service catalog and administration" },
     { name: "Bookings", description: "Booking workflow endpoints" },
     { name: "Staff", description: "Staff listing" },
+    { name: "Upload", description: "File upload for service images" },
   ],
   components: {
     securitySchemes: {
@@ -406,6 +407,70 @@ const swaggerDocument = {
         summary: "Get active staff list",
         responses: {
           "200": { description: "Staff list" },
+        },
+      },
+    },
+    "/upload/service-image": {
+      post: {
+        tags: ["Upload"],
+        summary: "Upload a service image (Admin only)",
+        description: "Upload a JPEG/PNG/WebP/GIF image (max 5 MB). Returns the public URL to use in service create/update.",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: {
+                type: "object",
+                required: ["image"],
+                properties: {
+                  image: {
+                    type: "string",
+                    format: "binary",
+                    description: "Image file (JPEG, PNG, WebP, GIF — max 5 MB)",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Image uploaded successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    url: { type: "string", example: "http://localhost:4000/uploads/services/1713000000000-abc123.jpg" },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "No file or invalid file type/size" },
+          "403": { description: "Forbidden" },
+        },
+      },
+    },
+    "/upload/service-image/{filename}": {
+      delete: {
+        tags: ["Upload"],
+        summary: "Delete an uploaded service image (Admin only)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "filename",
+            in: "path",
+            required: true,
+            schema: { type: "string", example: "1713000000000-abc123.jpg" },
+          },
+        ],
+        responses: {
+          "200": { description: "Image deleted" },
+          "404": { description: "File not found" },
+          "403": { description: "Forbidden" },
         },
       },
     },

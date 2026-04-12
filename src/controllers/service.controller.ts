@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
 const serviceSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
-  image: z.string().url().optional(),
+  image: z.string().min(1).optional(),
   duration: z.number().int().positive(),
   price: z.number().positive(),
   category: z.string().min(1),
