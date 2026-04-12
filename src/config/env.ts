@@ -13,4 +13,6 @@ export const ENV = {
   SMTP_USER: process.env.SMTP_USER!,
   SMTP_PASS: process.env.SMTP_PASS!,
   EMAIL_FROM: process.env.EMAIL_FROM!,
+  SALON_EMAIL: process.env.SALON_EMAIL || process.env.SMTP_USER!,
+  EMAIL_DEBUG: process.env.EMAIL_DEBUG === "true",
 };

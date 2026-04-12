@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../config/database";
 import { ENV } from "../config/env";
 import { z } from "zod";
+import { AuthRequest } from "../types";
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -32,7 +33,7 @@ export const register = async (req: Request, res: Response) => {
   });
 
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, ENV.JWT_SECRET, {
-    expiresIn: ENV.JWT_EXPIRES_IN,
+    expiresIn: ENV.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
   });
 
   res.status(201).json({ success: true, data: { user, token } });
@@ -49,51 +50,21 @@ export const login = async (req: Request, res: Response) => {
   }
 
   const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, ENV.JWT_SECRET, {
-    expiresIn: ENV.JWT_EXPIRES_IN,
+    expiresIn: ENV.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
   });
 
   res.json({ success: true, data: { user: { id: user.id, name: user.name, email: user.email, role: user.role }, token } });
 };
 
-export const me = async (req: Request & { user?: any }, res: Response) => {
+export const me = async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ success: false, message: "Unauthorized" });
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: { id: true, name: true, email: true, phone: true, role: true, createdAt: true },
   });
+
   res.json({ success: true, data: user });
-};
-
-const authService = new AuthService();
-
-// Register a new user
-export const register = async (req: Request, res: Response) => {
-  try {
-    const userData = req.body;
-    const newUser = await authService.register(userData);
-    res.status(201).json({ message: 'User registered successfully', user: newUser });
-  } catch (error) {
-    res.status(400).json({ message: error.message });
-  }
-};
-
-// Login a user
-export const login = async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
-    const token = await authService.login(email, password);
-    res.status(200).json({ message: 'Login successful', token });
-  } catch (error) {
-    res.status(401).json({ message: error.message });
-  }
-};
-
-// Get user profile
-export const getProfile = async (req: Request, res: Response) => {
-  try {
-    const userId = req.user.id; // Assuming user ID is stored in req.user
-    const user = await User.findById(userId);
-    res.status(200).json(user);
-  } catch (error) {
-    res.status(404).json({ message: error.message });
-  }
 };

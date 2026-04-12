@@ -16,6 +16,19 @@ export const authenticate = (req: AuthRequest, res: Response, next: NextFunction
   }
 };
 
+// Attach user if token is present, but do NOT fail if missing
+export const optionalAuthenticate = (req: AuthRequest, _res: Response, next: NextFunction) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (token) {
+    try {
+      req.user = jwt.verify(token, ENV.JWT_SECRET) as AuthRequest["user"];
+    } catch {
+      // ignore invalid tokens for optional auth
+    }
+  }
+  next();
+};
+
 export const authorize = (...roles: string[]) =>
   (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {

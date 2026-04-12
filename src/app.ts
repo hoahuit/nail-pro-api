@@ -6,6 +6,7 @@ import rateLimit from "express-rate-limit";
 import { ENV } from "./config/env";
 import routes from "./routes";
 import { errorHandler, notFound } from "./middleware/error.middleware";
+import { setupSwagger } from "./config/swagger";
 
 const app = express();
 
@@ -15,6 +16,8 @@ app.use(morgan(ENV.NODE_ENV === "development" ? "dev" : "combined"));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100, message: "Too many requests" }));
+
+setupSwagger(app);
 
 app.get("/health", (_req, res) => res.json({ status: "ok", timestamp: new Date().toISOString() }));
 app.use("/api/v1", routes);
