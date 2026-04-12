@@ -11,8 +11,12 @@ import { setupSwagger } from "./config/swagger";
 
 const app = express();
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
-app.use(cors({ origin: ENV.FRONTEND_URL, credentials: true }));
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);app.use(cors({ origin: ENV.FRONTEND_URL, credentials: true }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 app.use(morgan(ENV.NODE_ENV === "development" ? "dev" : "combined"));
 app.use(express.json());
