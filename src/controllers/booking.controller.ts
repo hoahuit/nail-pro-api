@@ -8,6 +8,7 @@ import {
 } from "../services/email.service";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import { checkVoucherValidity } from "./voucher.controller";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -21,21 +22,18 @@ const optionalTrimmedString = z.preprocess((value) => {
 }, z.string().optional());
 
 const createSchema = z.object({
-  serviceId: z.string(),
-  staffId: optionalTrimmedString,
-  // ISO 8601 datetime, e.g. "2026-04-20T10:00:00"
-  startTime: z.string().datetime({ message: "startTime must be ISO 8601, e.g. 2026-04-20T10:00:00" }),
+  serviceId:    z.string(),
+  staffId:      optionalTrimmedString,
+  startTime:    z.string().datetime({ message: "startTime must be ISO 8601, e.g. 2026-04-20T10:00:00" }),
   customerName: z.string().min(2),
   customerPhone: z.string().min(6),
   customerEmail: z.preprocess((value) => {
-    if (typeof value !== "string") {
-      return value;
-    }
-
+    if (typeof value !== "string") return value;
     const trimmed = value.trim();
     return trimmed === "" ? undefined : trimmed;
   }, z.string().email().optional()),
-  notes: optionalTrimmedString,
+  notes:        optionalTrimmedString,
+  voucherCode:  optionalTrimmedString,
 });
 
 const statusSchema = z.object({
@@ -133,12 +131,24 @@ export const create = async (req: AuthRequest, res: Response) => {
 
   const {
     serviceId, staffId, startTime,
-    customerName, customerPhone, customerEmail, notes,
+    customerName, customerPhone, customerEmail, notes, voucherCode,
   } = parsed.data;
 
   const service = await prisma.service.findUnique({ where: { id: serviceId } });
   if (!service || !service.isActive) {
     return res.status(404).json({ success: false, message: "Service not found" });
+  }
+
+  // Validate voucher if provided
+  let voucherId: string | null = null;
+  let discountAmount = 0;
+  if (voucherCode) {
+    const voucherCheck = await checkVoucherValidity(voucherCode.toUpperCase(), +service.price);
+    if (!voucherCheck.valid) {
+      return res.status(400).json({ success: false, message: voucherCheck.message });
+    }
+    voucherId      = voucherCheck.voucher!.id;
+    discountAmount = voucherCheck.discountAmount!;
   }
 
   if (staffId) {
@@ -178,6 +188,9 @@ export const create = async (req: AuthRequest, res: Response) => {
       endTime:       end,
       duration:      service.duration,
       totalPrice:    service.price,
+      discountAmount: discountAmount > 0 ? discountAmount : null,
+      finalPrice:    discountAmount > 0 ? +(+service.price - discountAmount).toFixed(2) : null,
+      voucherId:     voucherId ?? null,
       status:        "PENDING",
       notes:         notes ?? null,
     },
@@ -186,6 +199,14 @@ export const create = async (req: AuthRequest, res: Response) => {
       staff:   { select: { name: true } },
     },
   });
+
+  // Increment voucher usedCount
+  if (voucherId) {
+    await prisma.voucher.update({
+      where: { id: voucherId },
+      data:  { usedCount: { increment: 1 } },
+    });
+  }
 
   // Resolve email target: customerEmail OR linked user's email
   let emailTarget = customerEmail ?? null;

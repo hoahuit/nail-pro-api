@@ -17,22 +17,54 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  bookings      Booking[]
-  pointHistory  PointHistory[]
+  bookings Booking[]
 
   @@map("users")
 }
-model PointHistory {
-  id        String   @id @default(cuid())
-  userId    String
-  points    Int
-  type      String
-  note      String?
-  createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+model LoyaltyAccount {
+  id            String         @id @default(cuid())
+  phone         String         @unique
+  customerName  String?
+  totalPoints   Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  history       PointHistory[]
+
+  @@map("loyalty_accounts")
+}
+model PointHistory {
+  id               String         @id @default(cuid())
+  loyaltyAccountId String
+  points           Int
+  type             String         // "EARN" | "ADJUST"
+  amountSpent      Decimal?       @db.Decimal(10, 2)
+  note             String?
+  addedByAdminId   String?
+  createdAt        DateTime       @default(now())
+
+  loyaltyAccount LoyaltyAccount @relation(fields: [loyaltyAccountId], references: [id])
 
   @@map("point_history")
+}
+
+model Voucher {
+  id            String    @id @default(cuid())
+  code          String    @unique
+  type          String    // "PERCENT" | "FIXED"
+  value         Decimal   @db.Decimal(10, 2)
+  minOrderValue Decimal?  @db.Decimal(10, 2)
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  bookings Booking[]
+
+  @@map("vouchers")
 }
 
 
@@ -84,6 +116,10 @@ model Booking {
 
   duration       Int
   totalPrice     Decimal       @db.Decimal(10, 2)
+  discountAmount Decimal?      @db.Decimal(10, 2)
+  finalPrice     Decimal?      @db.Decimal(10, 2)
+
+  voucherId      String?
 
   status         String        @default("PENDING")
   notes          String?
@@ -94,6 +130,7 @@ model Booking {
   user           User?    @relation(fields: [userId], references: [id])
   service        Service  @relation(fields: [serviceId], references: [id])
   staff          Staff?   @relation(fields: [staffId], references: [id])
+  voucher        Voucher? @relation(fields: [voucherId], references: [id])
 
   @@index([staffId, startTime, endTime])
   @@map("bookings")
