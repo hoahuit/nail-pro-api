@@ -136,3 +136,13 @@ model Booking {
   @@map("bookings")
 }
 
+model SalonDayOff {
+  id        String   @id @default(cuid())
+  date      String   @unique // YYYY-MM-DD
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("salon_day_offs")
+}
+

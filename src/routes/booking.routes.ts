@@ -2,10 +2,13 @@ import { Router } from "express";
 import * as booking from "../controllers/booking.controller";
 import { authenticate, authorize, optionalAuthenticate } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/async.middleware";
+import { listPublicDayOffs } from "../controllers/dayoff.controller";
 
 const router = Router();
 
 // ── Public ────────────────────────────────────────────────────────────────────
+router.get("/day-offs", asyncHandler(listPublicDayOffs));
+
 // Check available time slots before booking
 router.get("/available-slots", asyncHandler(booking.getAvailableSlots));
 
