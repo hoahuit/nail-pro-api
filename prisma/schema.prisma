@@ -27,6 +27,7 @@ model LoyaltyAccount {
   phone         String         @unique
   customerName  String?
   totalPoints   Int            @default(0)
+  isActive      Boolean        @default(true)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -34,12 +35,43 @@ model LoyaltyAccount {
 
   @@map("loyalty_accounts")
 }
+
+model LoyaltyProgramConfig {
+  id            String             @id @default(cuid())
+  code          String             @unique @default("DEFAULT")
+  pointsPerVisit Int               @default(1)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  rewardRules   LoyaltyRewardRule[]
+
+  @@map("loyalty_program_configs")
+}
+
+model LoyaltyRewardRule {
+  id              String               @id @default(cuid())
+  programId       String
+  thresholdPoints Int
+  rewardType      String               // "FIXED" | "PERCENT"
+  rewardValue     Decimal              @db.Decimal(10, 2)
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  program         LoyaltyProgramConfig @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  @@unique([programId, thresholdPoints])
+  @@index([programId, thresholdPoints])
+  @@map("loyalty_reward_rules")
+}
+
 model PointHistory {
   id               String         @id @default(cuid())
   loyaltyAccountId String
   points           Int
   type             String         // "EARN" | "ADJUST"
   amountSpent      Decimal?       @db.Decimal(10, 2)
+  staffName        String?
   note             String?
   addedByAdminId   String?
   createdAt        DateTime       @default(now())

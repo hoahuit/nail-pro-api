@@ -6,6 +6,13 @@ import {
   adjustPoints,
   adminLookup,
   listAccounts,
+  getProgramSettings,
+  updateProgramSettings,
+  listRewardRules,
+  createRewardRule,
+  updateRewardRule,
+  deleteRewardRule,
+  deleteLoyaltyAccount,
 } from "../controllers/loyalty.controller";
 import {
   createVoucher,
@@ -30,6 +37,13 @@ router.get("/loyalty",                  asyncHandler(listAccounts));
 router.get("/loyalty/lookup",           asyncHandler(adminLookup));
 router.post("/loyalty/add-points",      asyncHandler(addPoints));
 router.post("/loyalty/adjust",          asyncHandler(adjustPoints));
+router.get("/loyalty/settings",         asyncHandler(getProgramSettings));
+router.patch("/loyalty/settings",       asyncHandler(updateProgramSettings));
+router.get("/loyalty/reward-rules",     asyncHandler(listRewardRules));
+router.post("/loyalty/reward-rules",    asyncHandler(createRewardRule));
+router.patch("/loyalty/reward-rules/:id", asyncHandler(updateRewardRule));
+router.delete("/loyalty/reward-rules/:id", asyncHandler(deleteRewardRule));
+router.delete("/loyalty/accounts/:phone", asyncHandler(deleteLoyaltyAccount));
 
 // ── Vouchers ─────────────────────────────────────────────────────────────────
 router.get("/vouchers",         asyncHandler(listVouchers));
