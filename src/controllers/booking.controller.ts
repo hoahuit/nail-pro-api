@@ -59,6 +59,7 @@ const listQuerySchema = z.object({
 const OPEN_HOUR  = 9;   // 09:00
 const CLOSE_HOUR = 18;  // 18:00
 const SLOT_INTERVAL_MIN = 15; // generate a potential slot every 15 min
+const MAX_IDENTICAL_SLOT_BOOKINGS = 3;
 
 // ─── GET /bookings/available-slots ───────────────────────────────────────────
 // Query: serviceId, date (YYYY-MM-DD), staffId? (optional)
@@ -75,40 +76,37 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     return res.status(404).json({ success: false, message: "Service not found" });
   }
 
-  // Day boundaries
-  const dayStart = new Date(`${date}T00:00:00`);
-  const dayEnd   = new Date(`${date}T23:59:59`);
-
-  // Existing bookings that are not cancelled
-  const existingBookings = await prisma.booking.findMany({
-    where: {
-      ...(staffId ? { staffId } : {}),
-      status: { notIn: ["CANCELLED"] },
-      startTime: { gte: dayStart },
-      endTime:   { lte: dayEnd },
-    },
-    select: { startTime: true, endTime: true },
-  });
-
   const durationMs     = service.duration * 60 * 1000;
   const intervalMs     = SLOT_INTERVAL_MIN * 60 * 1000;
   const openTime       = new Date(`${date}T${String(OPEN_HOUR).padStart(2, "0")}:00:00`);
   const closeTime      = new Date(`${date}T${String(CLOSE_HOUR).padStart(2, "0")}:00:00`);
   const latestStart    = closeTime.getTime() - durationMs;
 
+  const dayStart = new Date(`${date}T00:00:00`);
+  const dayEnd   = new Date(`${date}T23:59:59`);
+  const sameDayBookings = await prisma.booking.findMany({
+    where: {
+      status: { notIn: ["CANCELLED"] },
+      startTime: { gte: dayStart, lte: dayEnd },
+    },
+    select: { startTime: true, endTime: true },
+  });
+
+  const slotUsage = new Map<string, number>();
+  for (const booking of sameDayBookings) {
+    const key = `${booking.startTime.toISOString()}|${booking.endTime.toISOString()}`;
+    slotUsage.set(key, (slotUsage.get(key) ?? 0) + 1);
+  }
+
   const slots: string[] = [];
   let cursor = openTime.getTime();
 
   while (cursor <= latestStart) {
-    const slotStart = cursor;
-    const slotEnd   = cursor + durationMs;
-    const hasConflict = existingBookings.some((b) => {
-      const bStart = b.startTime.getTime();
-      const bEnd   = b.endTime.getTime();
-      return bStart < slotEnd && bEnd > slotStart;
-    });
-    if (!hasConflict) {
-      slots.push(new Date(slotStart).toISOString());
+    const slotStart = new Date(cursor);
+    const slotEnd   = new Date(cursor + durationMs);
+    const key       = `${slotStart.toISOString()}|${slotEnd.toISOString()}`;
+    if ((slotUsage.get(key) ?? 0) < MAX_IDENTICAL_SLOT_BOOKINGS) {
+      slots.push(slotStart.toISOString());
     }
     cursor += intervalMs;
   }
@@ -161,18 +159,17 @@ export const create = async (req: AuthRequest, res: Response) => {
   const start = new Date(startTime);
   const end   = new Date(start.getTime() + service.duration * 60 * 1000);
 
-  // Conflict check: any non-cancelled booking that overlaps this slot
-  const conflict = await prisma.booking.findFirst({
+  const sameSlotCount = await prisma.booking.count({
     where: {
-      ...(staffId ? { staffId } : {}),
-      status: { notIn: ["CANCELLED"] },
-      AND: [{ startTime: { lt: end } }, { endTime: { gt: start } }],
+      status:    { notIn: ["CANCELLED"] },
+      startTime: start,
+      endTime:   end,
     },
   });
-  if (conflict) {
+  if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
     return res.status(409).json({
       success: false,
-      message: "This time slot is no longer available. Please choose another time.",
+      message: `This slot already has ${MAX_IDENTICAL_SLOT_BOOKINGS} bookings. Please choose another time.`,
     });
   }
 
@@ -356,28 +353,6 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
   });
   if (!existing) {
     return res.status(404).json({ success: false, message: "Booking not found" });
-  }
-
-  // When confirming, check for time conflicts with other confirmed bookings of the same staff
-  if (parsed.data.status === "CONFIRMED" && existing.staffId) {
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        id:      { not: existing.id },
-        staffId: existing.staffId,
-        status:  { in: ["CONFIRMED", "PENDING"] },
-        AND: [
-          { startTime: { lt: existing.endTime } },
-          { endTime:   { gt: existing.startTime } },
-        ],
-      },
-      select: { id: true, customerName: true, startTime: true, endTime: true },
-    });
-    if (conflict) {
-      return res.status(409).json({
-        success: false,
-        message: `Time conflict: staff already has a booking from ${conflict.startTime.toLocaleString("en-GB")} to ${conflict.endTime.toLocaleString("en-GB")} (ID: ${conflict.id}).`,
-      });
-    }
   }
 
   const booking = await prisma.booking.update({

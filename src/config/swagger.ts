@@ -345,7 +345,7 @@ const swaggerDocument = {
         },
         responses: {
           "201": { description: "Booking created and pending confirmation" },
-          "409": { description: "Time slot conflict" },
+          "409": { description: "Slot already reached maximum of 3 identical bookings" },
         },
       },
     },
