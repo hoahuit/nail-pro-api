@@ -5,15 +5,21 @@ import { Prisma } from "@prisma/client";
 
 // ─── Validation Schemas ──────────────────────────────────────────────────────
 
-const serviceSchema = z.object({
+const serviceBaseSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
   image: z.string().min(1).optional(),
-  duration: z.number().int().positive(),
-  price: z.number().positive(),
+  duration: z.coerce.number().int().positive(),
+  price: z.coerce.number().positive(),
+  priceMax: z.coerce.number().positive().optional().nullable(),
   category: z.string().min(1),
   isActive: z.boolean().optional(),
 });
+
+const serviceSchema = serviceBaseSchema.refine(
+  (d) => d.priceMax == null || d.priceMax >= d.price,
+  { message: "priceMax must be >= price", path: ["priceMax"] },
+);
 
 const filterSchema = z.object({
   // search
@@ -143,6 +149,10 @@ export const getCategories = async (_req: Request, res: Response) => {
 
 // ─── POST /services ───────────────────────────────────────────────────────────
 export const create = async (req: Request, res: Response) => {
+  // If image uploaded via multipart, inject the path into body
+  if (req.file) {
+    req.body.image = `/uploads/services/${req.file.filename}`;
+  }
   const parsed = serviceSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, errors: parsed.error.errors });
@@ -157,13 +167,23 @@ export const update = async (req: Request, res: Response) => {
   if (!exists) {
     return res.status(404).json({ success: false, message: "Service not found" });
   }
-  const parsed = serviceSchema.partial().safeParse(req.body);
+  // If new image uploaded via multipart, inject the path into body
+  if (req.file) {
+    req.body.image = `/uploads/services/${req.file.filename}`;
+  }
+  const parsed = serviceBaseSchema.partial().refine(
+    (d) => d.priceMax == null || d.price === undefined || d.priceMax >= d.price,
+    { message: "priceMax must be >= price", path: ["priceMax"] },
+  ).safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, errors: parsed.error.errors });
   }
   const service = await prisma.service.update({
     where: { id: req.params.id },
-    data: parsed.data,
+    data: {
+      ...parsed.data,
+      priceMax: parsed.data.priceMax ?? null,
+    },
   });
   res.json({ success: true, data: service });
 };

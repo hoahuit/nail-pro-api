@@ -21,10 +21,19 @@ const optionalTrimmedString = z.preprocess((value) => {
   return trimmed === "" ? undefined : trimmed;
 }, z.string().optional());
 
+const serviceItemSchema = z.object({
+  serviceId: z.string(),
+  staffId:   optionalTrimmedString,
+  startTime: z.string().datetime({ message: "startTime must be ISO 8601" }),
+});
+
 const createSchema = z.object({
-  serviceId:    z.string(),
+  // Multi-service: use `services` array
+  services: z.array(serviceItemSchema).min(1).optional(),
+  // Legacy single-service fields (kept for backwards compat)
+  serviceId:    z.string().optional(),
   staffId:      optionalTrimmedString,
-  startTime:    z.string().datetime({ message: "startTime must be ISO 8601, e.g. 2026-04-20T10:00:00" }),
+  startTime:    z.string().datetime({ message: "startTime must be ISO 8601, e.g. 2026-04-20T10:00:00" }).optional(),
   customerName: z.string().min(2),
   customerPhone: z.string().min(6),
   customerEmail: z.preprocess((value) => {
@@ -34,7 +43,10 @@ const createSchema = z.object({
   }, z.string().email().optional()),
   notes:        optionalTrimmedString,
   voucherCode:  optionalTrimmedString,
-});
+}).refine(
+  (d) => d.services?.length || (d.serviceId && d.startTime),
+  { message: "Provide either `services[]` or both `serviceId` and `startTime`" },
+);
 
 const statusSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
@@ -120,28 +132,76 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
 
 // ─── POST /bookings ───────────────────────────────────────────────────────────
 // Public endpoint — works for both guests and logged-in users.
-// Body: serviceId, staffId?, startTime, customerName, customerPhone, customerEmail?, notes?
+// Supports multi-service booking via `services[]` array.
+// Body (multipart/form-data or JSON):
+//   services: [{ serviceId, staffId?, startTime }]   ← multi-service
+//   OR serviceId + startTime + staffId?               ← legacy single service
+//   customerName, customerPhone, customerEmail?, notes?, voucherCode?, designImage?
 export const create = async (req: AuthRequest, res: Response) => {
-  const parsed = createSchema.safeParse(req.body);
+  // Parse body — supports both JSON and multipart (file upload)
+  let bodyData: Record<string, unknown> = { ...req.body };
+
+  // When sent as multipart, services arrives as a JSON string
+  if (typeof bodyData.services === "string") {
+    try {
+      bodyData.services = JSON.parse(bodyData.services);
+    } catch {
+      return res.status(400).json({ success: false, message: "Invalid `services` JSON" });
+    }
+  }
+
+  const parsed = createSchema.safeParse(bodyData);
   if (!parsed.success) {
     return res.status(400).json({ success: false, errors: parsed.error.errors });
   }
 
   const {
-    serviceId, staffId, startTime,
+    services: servicesInput,
+    serviceId: legacyServiceId, staffId: legacyStaffId, startTime: legacyStartTime,
     customerName, customerPhone, customerEmail, notes, voucherCode,
   } = parsed.data;
 
-  const service = await prisma.service.findUnique({ where: { id: serviceId } });
-  if (!service || !service.isActive) {
-    return res.status(404).json({ success: false, message: "Service not found" });
+  // Normalise to array of service items
+  const serviceItems = servicesInput?.length
+    ? servicesInput
+    : [{ serviceId: legacyServiceId!, staffId: legacyStaffId, startTime: legacyStartTime! }];
+
+  // Validate every service
+  const resolvedServices: { serviceId: string; staffId: string | null; start: Date; end: Date; duration: number; price: number; name: string }[] = [];
+  for (const item of serviceItems) {
+    const svc = await prisma.service.findUnique({ where: { id: item.serviceId } });
+    if (!svc || !svc.isActive) {
+      return res.status(404).json({ success: false, message: `Service not found: ${item.serviceId}` });
+    }
+    if (item.staffId) {
+      const staff = await prisma.staff.findUnique({ where: { id: item.staffId } });
+      if (!staff || !staff.isActive) {
+        return res.status(404).json({ success: false, message: `Staff not found: ${item.staffId}` });
+      }
+    }
+    const start = new Date(item.startTime);
+    const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
+
+    const sameSlotCount = await prisma.booking.count({
+      where: { status: { notIn: ["CANCELLED"] }, startTime: start, endTime: end },
+    });
+    if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+      return res.status(409).json({
+        success: false,
+        message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
+      });
+    }
+
+    resolvedServices.push({ serviceId: item.serviceId, staffId: item.staffId ?? null, start, end, duration: svc.duration, price: +svc.price, name: svc.name });
   }
 
-  // Validate voucher if provided
+  const subTotal = resolvedServices.reduce((sum, s) => sum + s.price, 0);
+
+  // Validate voucher against total
   let voucherId: string | null = null;
   let discountAmount = 0;
   if (voucherCode) {
-    const voucherCheck = await checkVoucherValidity(voucherCode.toUpperCase(), +service.price);
+    const voucherCheck = await checkVoucherValidity(voucherCode.toUpperCase(), subTotal);
     if (!voucherCheck.valid) {
       return res.status(400).json({ success: false, message: voucherCheck.message });
     }
@@ -149,51 +209,55 @@ export const create = async (req: AuthRequest, res: Response) => {
     discountAmount = voucherCheck.discountAmount!;
   }
 
-  if (staffId) {
-    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
-    if (!staff || !staff.isActive) {
-      return res.status(404).json({ success: false, message: "Staff member not found" });
-    }
-  }
+  // Overall booking window
+  const bookingStart = resolvedServices.reduce((min, s) => s.start < min ? s.start : min, resolvedServices[0].start);
+  const bookingEnd   = resolvedServices.reduce((max, s) => s.end > max ? s.end : max, resolvedServices[0].end);
+  const totalDuration = resolvedServices.reduce((sum, s) => sum + s.duration, 0);
 
-  const start = new Date(startTime);
-  const end   = new Date(start.getTime() + service.duration * 60 * 1000);
+  // Design image path (if uploaded)
+  const designImage = req.file ? `/uploads/bookings/${req.file.filename}` : null;
 
-  const sameSlotCount = await prisma.booking.count({
-    where: {
-      status:    { notIn: ["CANCELLED"] },
-      startTime: start,
-      endTime:   end,
-    },
-  });
-  if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
-    return res.status(409).json({
-      success: false,
-      message: `This slot already has ${MAX_IDENTICAL_SLOT_BOOKINGS} bookings. Please choose another time.`,
-    });
-  }
+  // Use first service as primary (legacy fields) if single service, else null
+  const primaryService = resolvedServices.length === 1 ? resolvedServices[0] : null;
 
   const booking = await prisma.booking.create({
     data: {
-      userId:        req.user?.id ?? null,
+      userId:         req.user?.id ?? null,
       customerName,
       customerPhone,
-      customerEmail: customerEmail ?? null,
-      serviceId,
-      staffId:       staffId ?? null,
-      startTime:     start,
-      endTime:       end,
-      duration:      service.duration,
-      totalPrice:    service.price,
+      customerEmail:  customerEmail ?? null,
+      serviceId:      primaryService?.serviceId ?? null,
+      staffId:        primaryService?.staffId ?? null,
+      startTime:      bookingStart,
+      endTime:        bookingEnd,
+      duration:       totalDuration,
+      totalPrice:     subTotal,
       discountAmount: discountAmount > 0 ? discountAmount : null,
-      finalPrice:    discountAmount > 0 ? +(+service.price - discountAmount).toFixed(2) : null,
-      voucherId:     voucherId ?? null,
-      status:        "PENDING",
-      notes:         notes ?? null,
+      finalPrice:     discountAmount > 0 ? +(subTotal - discountAmount).toFixed(2) : null,
+      voucherId:      voucherId ?? null,
+      status:         "PENDING",
+      notes:          notes ?? null,
+      designImage,
+      items: {
+        create: resolvedServices.map((s) => ({
+          serviceId: s.serviceId,
+          staffId:   s.staffId,
+          startTime: s.start,
+          endTime:   s.end,
+          duration:  s.duration,
+          price:     s.price,
+        })),
+      },
     },
     include: {
       service: { select: { name: true, category: true } },
       staff:   { select: { name: true } },
+      items: {
+        include: {
+          service: { select: { name: true, category: true } },
+          staff:   { select: { name: true } },
+        },
+      },
     },
   });
 
@@ -217,10 +281,10 @@ export const create = async (req: AuthRequest, res: Response) => {
 
   const emailPayload = {
     name:      customerName,
-    service:   booking.service.name,
-    startTime: start.toLocaleString("en-GB"),
-    endTime:   end.toLocaleString("en-GB"),
-    staff:     booking.staff?.name,
+    service:   resolvedServices.map((s) => s.name).join(", "),
+    startTime: bookingStart.toLocaleString("en-GB"),
+    endTime:   bookingEnd.toLocaleString("en-GB"),
+    staff:     primaryService?.staffId ? (booking.staff?.name ?? undefined) : undefined,
     bookingId: booking.id,
   };
 
@@ -240,8 +304,8 @@ export const create = async (req: AuthRequest, res: Response) => {
     customerName,
     customerPhone,
     customerEmail: emailTarget,
-    service:       booking.service.name,
-    startTime:     start.toLocaleString("en-GB"),
+    service:       resolvedServices.map((s) => s.name).join(", "),
+    startTime:     bookingStart.toLocaleString("en-GB"),
     staff:         booking.staff?.name,
   }).catch((e) => console.error("[email] salon notification:", e));
 
@@ -259,6 +323,12 @@ export const getMyBookings = async (req: AuthRequest, res: Response) => {
     include: {
       service: { select: { name: true, category: true, image: true } },
       staff:   { select: { name: true, avatar: true } },
+      items: {
+        include: {
+          service: { select: { name: true, category: true, image: true } },
+          staff:   { select: { name: true, avatar: true } },
+        },
+      },
     },
     orderBy: { startTime: "desc" },
   });
@@ -300,6 +370,12 @@ export const getAll = async (req: AuthRequest, res: Response) => {
         service: { select: { name: true, category: true } },
         staff:   { select: { name: true } },
         user:    { select: { name: true, email: true, phone: true } },
+        items: {
+          include: {
+            service: { select: { name: true, category: true } },
+            staff:   { select: { name: true } },
+          },
+        },
       },
       orderBy: { startTime: "asc" },
       skip: (page - 1) * limit,
@@ -322,6 +398,12 @@ export const getById = async (req: AuthRequest, res: Response) => {
       service: true,
       staff:   { select: { name: true, avatar: true } },
       user:    { select: { name: true, email: true } },
+      items: {
+        include: {
+          service: true,
+          staff:   { select: { name: true, avatar: true } },
+        },
+      },
     },
   });
   if (!booking) {
@@ -377,7 +459,7 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
     if (emailTarget) {
       sendBookingStatusUpdate(emailTarget, {
         name:      existing.customerName,
-        service:   existing.service.name,
+        service:   existing.service?.name ?? "Service",
         startTime: existing.startTime.toLocaleString("en-GB"),
         staff:     existing.staff?.name,
         status:    parsed.data.status as "CONFIRMED" | "CANCELLED",

@@ -32,3 +32,22 @@ export const uploadServiceImage = multer({
   fileFilter,
   limits: { fileSize: MAX_SIZE_BYTES },
 }).single("image");
+
+const bookingStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    const dir = path.join(process.cwd(), "uploads", "bookings");
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+    cb(null, name);
+  },
+});
+
+export const uploadBookingDesign = multer({
+  storage: bookingStorage,
+  fileFilter,
+  limits: { fileSize: MAX_SIZE_BYTES },
+}).single("designImage");

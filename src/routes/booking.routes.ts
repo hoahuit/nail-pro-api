@@ -3,6 +3,7 @@ import * as booking from "../controllers/booking.controller";
 import { authenticate, authorize, optionalAuthenticate } from "../middleware/auth.middleware";
 import { asyncHandler } from "../middleware/async.middleware";
 import { listPublicDayOffs } from "../controllers/dayoff.controller";
+import { uploadBookingDesign } from "../middleware/upload.middleware";
 
 const router = Router();
 
@@ -13,7 +14,8 @@ router.get("/day-offs", asyncHandler(listPublicDayOffs));
 router.get("/available-slots", asyncHandler(booking.getAvailableSlots));
 
 // Create booking — guest or logged-in user (optionalAuthenticate attaches user if token present)
-router.post("/", optionalAuthenticate, asyncHandler(booking.create));
+// Accepts multipart/form-data (with optional designImage file) or JSON
+router.post("/", optionalAuthenticate, uploadBookingDesign, asyncHandler(booking.create));
 
 // ── Authenticated user ────────────────────────────────────────────────────────
 router.get("/mine",       authenticate, asyncHandler(booking.getMyBookings));      // my bookings
