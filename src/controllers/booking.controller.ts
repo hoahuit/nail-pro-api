@@ -68,10 +68,33 @@ const listQuerySchema = z.object({
 });
 
 // ─── Salon business hours ─────────────────────────────────────────────────────
-const OPEN_HOUR  = 9;   // 09:00
-const CLOSE_HOUR = 18;  // 18:00
+const OPEN_HOUR  = 9;   // 09:00 London time
+const CLOSE_HOUR = 18;  // 18:00 London time
 const SLOT_INTERVAL_MIN = 15; // generate a potential slot every 15 min
 const MAX_IDENTICAL_SLOT_BOOKINGS = 3;
+const SALON_TIMEZONE = "Europe/London";
+
+/**
+ * Convert a date string (YYYY-MM-DD) + hour/minute in London local time to a UTC Date.
+ * Handles both GMT (UTC+0) and BST (UTC+1) automatically.
+ */
+const londonToUTC = (date: string, hour: number, minute = 0, second = 0): Date => {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SALON_TIMEZONE,
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  // Start with a UTC guess (ignoring London offset)
+  const guess = new Date(`${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`);
+  // Find what London clock shows for that UTC moment
+  const parts = fmt.formatToParts(guess);
+  const lH = parseInt(parts.find((p) => p.type === "hour")!.value);
+  const lM = parseInt(parts.find((p) => p.type === "minute")!.value);
+  const lS = parseInt(parts.find((p) => p.type === "second")!.value);
+  // Shift by the difference
+  const diffMs = ((hour - lH) * 3600 + (minute - lM) * 60 + (second - lS)) * 1000;
+  return new Date(guess.getTime() + diffMs);
+};
 
 // ─── GET /bookings/available-slots ───────────────────────────────────────────
 // Query: serviceId, date (YYYY-MM-DD), staffId? (optional)
@@ -90,12 +113,12 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
 
   const durationMs     = service.duration * 60 * 1000;
   const intervalMs     = SLOT_INTERVAL_MIN * 60 * 1000;
-  const openTime       = new Date(`${date}T${String(OPEN_HOUR).padStart(2, "0")}:00:00`);
-  const closeTime      = new Date(`${date}T${String(CLOSE_HOUR).padStart(2, "0")}:00:00`);
+  const openTime       = londonToUTC(date, OPEN_HOUR);
+  const closeTime      = londonToUTC(date, CLOSE_HOUR);
   const latestStart    = closeTime.getTime() - durationMs;
 
-  const dayStart = new Date(`${date}T00:00:00`);
-  const dayEnd   = new Date(`${date}T23:59:59`);
+  const dayStart = londonToUTC(date, 0, 0, 0);
+  const dayEnd   = londonToUTC(date, 23, 59, 59);
   const sameDayBookings = await prisma.booking.findMany({
     where: {
       status: { notIn: ["CANCELLED"] },
@@ -282,8 +305,8 @@ export const create = async (req: AuthRequest, res: Response) => {
   const emailPayload = {
     name:      customerName,
     service:   resolvedServices.map((s) => s.name).join(", "),
-    startTime: bookingStart.toLocaleString("en-GB"),
-    endTime:   bookingEnd.toLocaleString("en-GB"),
+    startTime: bookingStart.toLocaleString("en-GB", { timeZone: "Europe/London" }),
+    endTime:   bookingEnd.toLocaleString("en-GB", { timeZone: "Europe/London" }),
     staff:     primaryService?.staffId ? (booking.staff?.name ?? undefined) : undefined,
     bookingId: booking.id,
   };
@@ -305,7 +328,7 @@ export const create = async (req: AuthRequest, res: Response) => {
     customerPhone,
     customerEmail: emailTarget,
     service:       resolvedServices.map((s) => s.name).join(", "),
-    startTime:     bookingStart.toLocaleString("en-GB"),
+    startTime:     bookingStart.toLocaleString("en-GB", { timeZone: "Europe/London" }),
     staff:         booking.staff?.name,
   }).catch((e) => console.error("[email] salon notification:", e));
 
@@ -349,8 +372,8 @@ export const getAll = async (req: AuthRequest, res: Response) => {
     ...(staffId && { staffId }),
     ...(date && {
       startTime: {
-        gte: new Date(`${date}T00:00:00`),
-        lte: new Date(`${date}T23:59:59`),
+        gte: londonToUTC(date, 0, 0, 0),
+        lte: londonToUTC(date, 23, 59, 59),
       },
     }),
     ...(search && {
