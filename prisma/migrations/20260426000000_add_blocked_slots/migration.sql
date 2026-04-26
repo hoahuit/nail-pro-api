@@ -1,0 +1,23 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'blocked_slots')
+BEGIN
+  CREATE TABLE [dbo].[blocked_slots] (
+    [id]        NVARCHAR(1000) NOT NULL,
+    [slotTime]  DATETIME2      NOT NULL,
+    [reason]    NVARCHAR(1000),
+    [createdAt] DATETIME2      NOT NULL CONSTRAINT [blocked_slots_createdAt_df] DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT [blocked_slots_pkey]     PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [blocked_slots_slot_key] UNIQUE NONCLUSTERED ([slotTime])
+  );
+END;
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+  IF @@TRANCOUNT > 0 ROLLBACK TRAN;
+  THROW;
+END CATCH;

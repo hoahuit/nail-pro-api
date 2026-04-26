@@ -200,3 +200,13 @@ model SalonDayOff {
   @@map("salon_day_offs")
 }
 
+model BlockedSlot {
+  id        String   @id @default(cuid())
+  slotTime  DateTime // UTC datetime of the blocked slot
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([slotTime])
+  @@map("blocked_slots")
+}
+

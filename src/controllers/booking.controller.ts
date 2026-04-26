@@ -151,20 +151,16 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     select: { startTime: true, endTime: true },
   });
 
-  const slotUsage = new Map<string, number>();
-  for (const booking of sameDayBookings) {
-    const key = booking.startTime.toISOString();
-    slotUsage.set(key, (slotUsage.get(key) ?? 0) + 1);
-  }
-
   const slots: string[] = [];
   let cursor = openTime.getTime();
 
   while (cursor <= latestStart) {
-    const slotStart = new Date(cursor);
-    const key       = slotStart.toISOString();
-    if ((slotUsage.get(key) ?? 0) < MAX_IDENTICAL_SLOT_BOOKINGS) {
-      slots.push(slotStart.toISOString());
+    const slotEnd    = cursor + durationMs;
+    const overlapping = sameDayBookings.filter(
+      (b) => b.startTime.getTime() < slotEnd && b.endTime.getTime() > cursor
+    ).length;
+    if (overlapping < MAX_IDENTICAL_SLOT_BOOKINGS) {
+      slots.push(new Date(cursor).toISOString());
     }
     cursor += intervalMs;
   }
@@ -218,10 +214,14 @@ export const createForAdmin = async (req: AuthRequest, res: Response) => {
     const start = new Date(item.startTime);
     const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
 
-    const sameSlotCount = await prisma.booking.count({
-      where: { status: { notIn: ["CANCELLED"] }, startTime: start },
+    const overlappingCount = await prisma.booking.count({
+      where: {
+        status:    { notIn: ["CANCELLED"] },
+        startTime: { lt: end },
+        endTime:   { gt: start },
+      },
     });
-    if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (overlappingCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
       return res.status(409).json({
         success: false,
         message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
@@ -353,10 +353,14 @@ export const create = async (req: AuthRequest, res: Response) => {
     const start = new Date(item.startTime);
     const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
 
-    const sameSlotCount = await prisma.booking.count({
-      where: { status: { notIn: ["CANCELLED"] }, startTime: start },
+    const overlappingCount = await prisma.booking.count({
+      where: {
+        status:    { notIn: ["CANCELLED"] },
+        startTime: { lt: end },
+        endTime:   { gt: start },
+      },
     });
-    if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (overlappingCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
       return res.status(409).json({
         success: false,
         message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
@@ -652,8 +656,8 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
       where: {
         id:        { not: existing.id },
         status:    { notIn: ["CANCELLED"] },
-        startTime: newStartTime,
-        endTime:   newEndTime,
+        startTime: { lt: newEndTime },
+        endTime:   { gt: newStartTime },
       },
     });
     if (slotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
@@ -732,7 +736,7 @@ export const updateStatus = async (req: AuthRequest, res: Response) => {
       sendBookingStatusUpdate(emailTarget, {
         name:      existing.customerName,
         service:   existing.service?.name ?? "Service",
-        startTime: existing.startTime.toLocaleString("en-GB"),
+        startTime: existing.startTime.toLocaleString("en-GB", { timeZone: "Europe/London" }),
         staff:     existing.staff?.name,
         status:    parsed.data.status as "CONFIRMED" | "CANCELLED",
         bookingId: existing.id,
