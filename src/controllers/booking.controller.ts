@@ -95,7 +95,7 @@ const listQuerySchema = z.object({
 const OPEN_HOUR  = 9;   // 09:00 London time
 const CLOSE_HOUR = 18;  // 18:00 London time
 const SLOT_INTERVAL_MIN = 15; // generate a potential slot every 15 min
-const MAX_IDENTICAL_SLOT_BOOKINGS = 3;
+const MAX_IDENTICAL_SLOT_BOOKINGS = 4;
 const SALON_TIMEZONE = "Europe/London";
 
 /**
@@ -153,7 +153,7 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
 
   const slotUsage = new Map<string, number>();
   for (const booking of sameDayBookings) {
-    const key = `${booking.startTime.toISOString()}|${booking.endTime.toISOString()}`;
+    const key = booking.startTime.toISOString();
     slotUsage.set(key, (slotUsage.get(key) ?? 0) + 1);
   }
 
@@ -162,8 +162,7 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
 
   while (cursor <= latestStart) {
     const slotStart = new Date(cursor);
-    const slotEnd   = new Date(cursor + durationMs);
-    const key       = `${slotStart.toISOString()}|${slotEnd.toISOString()}`;
+    const key       = slotStart.toISOString();
     if ((slotUsage.get(key) ?? 0) < MAX_IDENTICAL_SLOT_BOOKINGS) {
       slots.push(slotStart.toISOString());
     }
@@ -220,7 +219,7 @@ export const createForAdmin = async (req: AuthRequest, res: Response) => {
     const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
 
     const sameSlotCount = await prisma.booking.count({
-      where: { status: { notIn: ["CANCELLED"] }, startTime: start, endTime: end },
+      where: { status: { notIn: ["CANCELLED"] }, startTime: start },
     });
     if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
       return res.status(409).json({
@@ -355,7 +354,7 @@ export const create = async (req: AuthRequest, res: Response) => {
     const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
 
     const sameSlotCount = await prisma.booking.count({
-      where: { status: { notIn: ["CANCELLED"] }, startTime: start, endTime: end },
+      where: { status: { notIn: ["CANCELLED"] }, startTime: start },
     });
     if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
       return res.status(409).json({
