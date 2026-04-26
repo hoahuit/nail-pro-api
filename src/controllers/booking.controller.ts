@@ -48,6 +48,30 @@ const createSchema = z.object({
   { message: "Provide either `services[]` or both `serviceId` and `startTime`" },
 );
 
+const createAdminSchema = z.object({
+  services:      z.array(serviceItemSchema).min(1).optional(),
+  serviceId:     z.string().optional(),
+  staffId:       optionalTrimmedString,
+  startTime:     z.string().datetime({ message: "startTime must be ISO 8601" }).optional(),
+  customerName:  z.string().min(2),
+  customerPhone: z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return t === "" ? undefined : t;
+  }, z.string().min(6).optional()),
+  customerEmail: z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return t === "" ? undefined : t;
+  }, z.string().email().optional()),
+  notes:        optionalTrimmedString,
+  voucherCode:  optionalTrimmedString,
+  status:       z.enum(["PENDING", "CONFIRMED"]).optional().default("CONFIRMED"),
+}).refine(
+  (d) => d.services?.length || (d.serviceId && d.startTime),
+  { message: "Provide either `services[]` or both `serviceId` and `startTime`" },
+);
+
 const statusSchema = z.object({
   status: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]),
 });
@@ -151,6 +175,131 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     data: slots,
     meta: { date, serviceId, staffId: staffId ?? null, duration: service.duration },
   });
+};
+
+// ─── POST /bookings/admin ── Admin/Staff: create booking (phone/email optional) ─
+export const createForAdmin = async (req: AuthRequest, res: Response) => {
+  let bodyData: Record<string, unknown> = { ...req.body };
+
+  if (typeof bodyData.services === "string") {
+    try {
+      bodyData.services = JSON.parse(bodyData.services);
+    } catch {
+      return res.status(400).json({ success: false, message: "Invalid `services` JSON" });
+    }
+  }
+
+  const parsed = createAdminSchema.safeParse(bodyData);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, errors: parsed.error.errors });
+  }
+
+  const {
+    services: servicesInput,
+    serviceId: legacyServiceId, staffId: legacyStaffId, startTime: legacyStartTime,
+    customerName, customerPhone, customerEmail, notes, voucherCode, status,
+  } = parsed.data;
+
+  const serviceItems = servicesInput?.length
+    ? servicesInput
+    : [{ serviceId: legacyServiceId!, staffId: legacyStaffId, startTime: legacyStartTime! }];
+
+  const resolvedServices: { serviceId: string; staffId: string | null; start: Date; end: Date; duration: number; price: number; name: string }[] = [];
+  for (const item of serviceItems) {
+    const svc = await prisma.service.findUnique({ where: { id: item.serviceId } });
+    if (!svc || !svc.isActive) {
+      return res.status(404).json({ success: false, message: `Service not found: ${item.serviceId}` });
+    }
+    if (item.staffId) {
+      const staff = await prisma.staff.findUnique({ where: { id: item.staffId } });
+      if (!staff || !staff.isActive) {
+        return res.status(404).json({ success: false, message: `Staff not found: ${item.staffId}` });
+      }
+    }
+    const start = new Date(item.startTime);
+    const end   = new Date(start.getTime() + svc.duration * 60 * 1000);
+
+    const sameSlotCount = await prisma.booking.count({
+      where: { status: { notIn: ["CANCELLED"] }, startTime: start, endTime: end },
+    });
+    if (sameSlotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+      return res.status(409).json({
+        success: false,
+        message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
+      });
+    }
+
+    resolvedServices.push({ serviceId: item.serviceId, staffId: item.staffId ?? null, start, end, duration: svc.duration, price: +svc.price, name: svc.name });
+  }
+
+  const subTotal = resolvedServices.reduce((sum, s) => sum + s.price, 0);
+
+  let voucherId: string | null = null;
+  let discountAmount = 0;
+  if (voucherCode) {
+    const voucherCheck = await checkVoucherValidity(voucherCode.toUpperCase(), subTotal);
+    if (!voucherCheck.valid) {
+      return res.status(400).json({ success: false, message: voucherCheck.message });
+    }
+    voucherId      = voucherCheck.voucher!.id;
+    discountAmount = voucherCheck.discountAmount!;
+  }
+
+  const bookingStart  = resolvedServices.reduce((min, s) => s.start < min ? s.start : min, resolvedServices[0].start);
+  const bookingEnd    = resolvedServices.reduce((max, s) => s.end > max ? s.end : max, resolvedServices[0].end);
+  const totalDuration = resolvedServices.reduce((sum, s) => sum + s.duration, 0);
+  const designImage   = req.file ? `/uploads/bookings/${req.file.filename}` : null;
+  const primaryService = resolvedServices.length === 1 ? resolvedServices[0] : null;
+
+  const booking = await prisma.booking.create({
+    data: {
+      userId:         null,
+      customerName,
+      customerPhone:  customerPhone ?? "",
+      customerEmail:  customerEmail ?? null,
+      serviceId:      primaryService?.serviceId ?? null,
+      staffId:        primaryService?.staffId ?? null,
+      startTime:      bookingStart,
+      endTime:        bookingEnd,
+      duration:       totalDuration,
+      totalPrice:     subTotal,
+      discountAmount: discountAmount > 0 ? discountAmount : null,
+      finalPrice:     discountAmount > 0 ? +(subTotal - discountAmount).toFixed(2) : null,
+      voucherId:      voucherId ?? null,
+      status,
+      notes:          notes ?? null,
+      designImage,
+      items: {
+        create: resolvedServices.map((s) => ({
+          serviceId: s.serviceId,
+          staffId:   s.staffId,
+          startTime: s.start,
+          endTime:   s.end,
+          duration:  s.duration,
+          price:     s.price,
+        })),
+      },
+    },
+    include: {
+      service: { select: { name: true, category: true } },
+      staff:   { select: { name: true } },
+      items: {
+        include: {
+          service: { select: { name: true, category: true } },
+          staff:   { select: { name: true } },
+        },
+      },
+    },
+  });
+
+  if (voucherId) {
+    await prisma.voucher.update({
+      where: { id: voucherId },
+      data:  { usedCount: { increment: 1 } },
+    });
+  }
+
+  res.status(201).json({ success: true, data: booking });
 };
 
 // ─── POST /bookings ───────────────────────────────────────────────────────────
@@ -437,6 +586,107 @@ export const getById = async (req: AuthRequest, res: Response) => {
   if (!isOwner && !isAdminOrStaff) {
     return res.status(403).json({ success: false, message: "Forbidden" });
   }
+  res.json({ success: true, data: booking });
+};
+
+// ─── PATCH /bookings/:id ── Admin/Staff: edit booking info ───────────────────
+// Body (JSON or multipart): customerName?, customerPhone?, customerEmail?,
+//   notes?, staffId?, startTime? (ISO 8601), designImage? (file upload)
+// Only allowed when status is PENDING or CONFIRMED.
+const updateSchema = z.object({
+  customerName:  z.string().min(2).optional(),
+  customerPhone: z.string().min(6).optional(),
+  customerEmail: z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    const t = v.trim();
+    return t === "" ? undefined : t;
+  }, z.string().email().optional()),
+  notes:     optionalTrimmedString,
+  staffId:   optionalTrimmedString,
+  startTime: z.string().datetime({ message: "startTime must be ISO 8601" }).optional(),
+});
+
+export const updateBooking = async (req: AuthRequest, res: Response) => {
+  const existing = await prisma.booking.findUnique({
+    where: { id: req.params.id },
+    include: { items: true },
+  });
+  if (!existing) {
+    return res.status(404).json({ success: false, message: "Booking not found" });
+  }
+  if (!["PENDING", "CONFIRMED"].includes(existing.status)) {
+    return res.status(400).json({
+      success: false,
+      message: "Can only edit PENDING or CONFIRMED bookings",
+    });
+  }
+
+  let bodyData: Record<string, unknown> = { ...req.body };
+  if (req.file) {
+    bodyData.designImage = `/uploads/bookings/${req.file.filename}`;
+  }
+
+  const parsed = updateSchema.safeParse(bodyData);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, errors: parsed.error.errors });
+  }
+
+  const { customerName, customerPhone, customerEmail, notes, staffId, startTime } = parsed.data;
+
+  // If staffId provided, verify staff exists
+  if (staffId) {
+    const staff = await prisma.staff.findUnique({ where: { id: staffId } });
+    if (!staff || !staff.isActive) {
+      return res.status(404).json({ success: false, message: "Staff not found" });
+    }
+  }
+
+  // If startTime changed, recalculate endTime based on existing duration
+  let newStartTime: Date | undefined;
+  let newEndTime:   Date | undefined;
+  if (startTime) {
+    newStartTime = new Date(startTime);
+    newEndTime   = new Date(newStartTime.getTime() + existing.duration * 60 * 1000);
+
+    // Check slot availability (exclude current booking)
+    const slotCount = await prisma.booking.count({
+      where: {
+        id:        { not: existing.id },
+        status:    { notIn: ["CANCELLED"] },
+        startTime: newStartTime,
+        endTime:   newEndTime,
+      },
+    });
+    if (slotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+      return res.status(409).json({ success: false, message: "Slot is fully booked" });
+    }
+  }
+
+  const updateData: Prisma.BookingUpdateInput = {
+    ...(customerName  !== undefined && { customerName }),
+    ...(customerPhone !== undefined && { customerPhone }),
+    ...(customerEmail !== undefined && { customerEmail }),
+    ...(notes         !== undefined && { notes }),
+    ...(staffId       !== undefined && { staffId }),
+    ...(newStartTime  !== undefined && { startTime: newStartTime, endTime: newEndTime }),
+    ...(req.file && { designImage: bodyData.designImage as string }),
+  };
+
+  const booking = await prisma.booking.update({
+    where: { id: req.params.id },
+    data:  updateData,
+    include: {
+      service: { select: { name: true, category: true } },
+      staff:   { select: { name: true } },
+      items: {
+        include: {
+          service: { select: { name: true, category: true } },
+          staff:   { select: { name: true } },
+        },
+      },
+    },
+  });
+
   res.json({ success: true, data: booking });
 };
 

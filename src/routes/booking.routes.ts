@@ -23,7 +23,9 @@ router.get("/:id",        authenticate, asyncHandler(booking.getById));         
 router.patch("/:id/cancel", authenticate, asyncHandler(booking.cancel));           // cancel own
 
 // ── Admin / Staff ─────────────────────────────────────────────────────────────
-router.get("/",               authenticate, authorize("ADMIN", "STAFF"), asyncHandler(booking.getAll));        // list all
+router.post("/admin",         authenticate, authorize("ADMIN", "STAFF"), uploadBookingDesign, asyncHandler(booking.createForAdmin)); // create booking (phone/email optional)
+router.get("/",               authenticate, authorize("ADMIN", "STAFF"), asyncHandler(booking.getAll));          // list all
+router.patch("/:id",          authenticate, authorize("ADMIN", "STAFF"), uploadBookingDesign, asyncHandler(booking.updateBooking)); // edit booking info
 router.patch("/:id/status",   authenticate, authorize("ADMIN", "STAFF"), asyncHandler(booking.updateStatus)); // confirm/cancel/complete
 
 export default router;
