@@ -62,10 +62,10 @@ export const sendBookingConfirmation = async (
   await sendMailWithLogging({
     from: ENV.EMAIL_FROM,
     to,
-    subject: "✨ Booking pending confirmation — King Nails Cardiff",
+    subject: "✨ Your appointment is awaiting confirmation — King Nails Cardiff",
     html: `
       <div style="font-family:Georgia,serif;max-width:540px;margin:auto;padding:32px;background:#fdf8f4;border:1px solid #e8ddd8;border-radius:8px">
-        <h2 style="color:#2c1f1a;margin-bottom:4px">Your booking request has been submitted!</h2>
+        <h2 style="color:#2c1f1a;margin-bottom:4px">Your appointment is awaiting confirmation!</h2>
         <p style="color:#6b4f44;margin-top:0">Hi <strong>${data.name}</strong>,We'll confirm your apointment shortly from our team.</p>
         <table style="width:100%;margin:24px 0;border-collapse:collapse">
           <tr><td style="padding:8px 0;color:#6b4f44;border-bottom:1px solid #e8ddd8;width:40%">Service</td><td style="color:#2c1f1a;border-bottom:1px solid #e8ddd8"><strong>${data.service}</strong></td></tr>
