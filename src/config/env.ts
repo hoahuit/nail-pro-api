@@ -15,4 +15,5 @@ export const ENV = {
   EMAIL_FROM: process.env.EMAIL_FROM!,
   SALON_EMAIL: process.env.SALON_EMAIL || process.env.SMTP_USER!,
   EMAIL_DEBUG: process.env.EMAIL_DEBUG === "true",
+  MAX_BOOKINGS_PER_SLOT: parseInt(process.env.MAX_BOOKINGS_PER_SLOT || "4"),
 };

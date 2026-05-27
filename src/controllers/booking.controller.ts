@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { checkVoucherValidity } from "./voucher.controller";
+import { getMaxBookingsPerSlot } from "../services/settings.service";
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,6 @@ const listQuerySchema = z.object({
 const OPEN_HOUR  = 9;   // 09:00 London time
 const CLOSE_HOUR = 18;  // 18:00 London time
 const SLOT_INTERVAL_MIN = 15; // generate a potential slot every 15 min
-const MAX_IDENTICAL_SLOT_BOOKINGS = 4;
 const SALON_TIMEZONE = "Europe/London";
 
 /**
@@ -129,6 +129,7 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, errors: parsed.error.errors });
   }
   const { serviceId, date, staffId } = parsed.data;
+  const maxBookingsPerSlot = await getMaxBookingsPerSlot();
 
   const service = await prisma.service.findUnique({ where: { id: serviceId } });
   if (!service || !service.isActive) {
@@ -159,7 +160,7 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
     const overlapping = sameDayBookings.filter(
       (b) => b.startTime.getTime() < slotEnd && b.endTime.getTime() > cursor
     ).length;
-    if (overlapping < MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (overlapping < maxBookingsPerSlot) {
       slots.push(new Date(cursor).toISOString());
     }
     cursor += intervalMs;
@@ -175,6 +176,7 @@ export const getAvailableSlots = async (req: Request, res: Response) => {
 // ─── POST /bookings/admin ── Admin/Staff: create booking (phone/email optional) ─
 export const createForAdmin = async (req: AuthRequest, res: Response) => {
   let bodyData: Record<string, unknown> = { ...req.body };
+  const maxBookingsPerSlot = await getMaxBookingsPerSlot();
 
   if (typeof bodyData.services === "string") {
     try {
@@ -221,7 +223,7 @@ export const createForAdmin = async (req: AuthRequest, res: Response) => {
         endTime:   { gt: start },
       },
     });
-    if (overlappingCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (overlappingCount >= maxBookingsPerSlot) {
       return res.status(409).json({
         success: false,
         message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
@@ -309,6 +311,7 @@ export const createForAdmin = async (req: AuthRequest, res: Response) => {
 //   OR serviceId + startTime + staffId?               ← legacy single service
 //   customerName, customerPhone, customerEmail?, notes?, voucherCode?, designImage?
 export const create = async (req: AuthRequest, res: Response) => {
+  const maxBookingsPerSlot = await getMaxBookingsPerSlot();
   // Parse body — supports both JSON and multipart (file upload)
   let bodyData: Record<string, unknown> = { ...req.body };
 
@@ -360,7 +363,7 @@ export const create = async (req: AuthRequest, res: Response) => {
         endTime:   { gt: start },
       },
     });
-    if (overlappingCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (overlappingCount >= maxBookingsPerSlot) {
       return res.status(409).json({
         success: false,
         message: `Slot ${item.startTime} for service "${svc.name}" is fully booked.`,
@@ -648,6 +651,7 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
   let newStartTime: Date | undefined;
   let newEndTime:   Date | undefined;
   if (startTime) {
+    const maxBookingsPerSlot = await getMaxBookingsPerSlot();
     newStartTime = new Date(startTime);
     newEndTime   = new Date(newStartTime.getTime() + existing.duration * 60 * 1000);
 
@@ -660,7 +664,7 @@ export const updateBooking = async (req: AuthRequest, res: Response) => {
         endTime:   { gt: newStartTime },
       },
     });
-    if (slotCount >= MAX_IDENTICAL_SLOT_BOOKINGS) {
+    if (slotCount >= maxBookingsPerSlot) {
       return res.status(409).json({ success: false, message: "Slot is fully booked" });
     }
   }

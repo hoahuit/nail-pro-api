@@ -17,6 +17,14 @@ IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'loya
 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'point_history' AND COLUMN_NAME = 'staffName')
   ALTER TABLE [dbo].[point_history] ADD [staffName] NVARCHAR(1000);
 
+-- Ensure bookings.serviceId is nullable for SET NULL FK
+IF EXISTS (
+  SELECT 1
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_NAME = 'bookings' AND COLUMN_NAME = 'serviceId' AND IS_NULLABLE = 'NO'
+)
+  ALTER TABLE [dbo].[bookings] ALTER COLUMN [serviceId] NVARCHAR(1000) NULL;
+
 -- CreateTable loyalty_program_configs (only if not exists)
 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'loyalty_program_configs')
 BEGIN

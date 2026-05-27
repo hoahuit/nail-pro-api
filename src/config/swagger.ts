@@ -19,6 +19,7 @@ const swaggerDocument = {
     { name: "Auth", description: "Authentication endpoints" },
     { name: "Services", description: "Service catalog and administration" },
     { name: "Bookings", description: "Booking workflow endpoints" },
+    { name: "Admin", description: "Admin-only configuration and tools" },
     { name: "Staff", description: "Staff listing" },
     { name: "Upload", description: "File upload for service images" },
   ],
@@ -138,6 +139,28 @@ const swaggerDocument = {
           avatar: { type: "string", nullable: true },
         },
       },
+      AdminSettings: {
+        type: "object",
+        properties: {
+          settings: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string", example: "max_bookings_per_slot" },
+                value: { type: "string", example: "4" },
+              },
+            },
+          },
+          maxBookingsPerSlot: { type: "integer", example: 4 },
+        },
+      },
+      UpdateAdminSettingsInput: {
+        type: "object",
+        properties: {
+          maxBookingsPerSlot: { type: "integer", example: 6 },
+        },
+      },
     },
   },
   paths: {
@@ -197,6 +220,62 @@ const swaggerDocument = {
         responses: {
           "200": { description: "Current user profile" },
           "401": { description: "Unauthorized" },
+        },
+      },
+    },
+    "/admin/settings": {
+      get: {
+        tags: ["Admin"],
+        summary: "Get admin settings",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          "200": {
+            description: "Settings payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AdminSettings" },
+              },
+            },
+          },
+          "401": { description: "Unauthorized" },
+          "403": { description: "Forbidden" },
+        },
+      },
+      patch: {
+        tags: ["Admin"],
+        summary: "Update admin settings",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/UpdateAdminSettingsInput" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated settings",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    data: {
+                      type: "object",
+                      properties: {
+                        maxBookingsPerSlot: { type: "integer", example: 6 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Validation failed" },
+          "401": { description: "Unauthorized" },
+          "403": { description: "Forbidden" },
         },
       },
     },

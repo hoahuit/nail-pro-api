@@ -200,6 +200,15 @@ model SalonDayOff {
   @@map("salon_day_offs")
 }
 
+model Setting {
+  key       String   @id
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
 model BlockedSlot {
   id        String   @id @default(cuid())
   slotTime  DateTime // UTC datetime of the blocked slot

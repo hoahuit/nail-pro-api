@@ -26,6 +26,10 @@ import {
   upsertDayOff,
   deleteDayOff,
 } from "../controllers/dayoff.controller";
+import {
+  getSettings,
+  updateSettings,
+} from "../controllers/settings.controller";
 
 const router = Router();
 
@@ -56,5 +60,9 @@ router.delete("/vouchers/:id",  asyncHandler(deleteVoucher));
 router.get("/day-offs",         asyncHandler(listDayOffs));
 router.post("/day-offs",        asyncHandler(upsertDayOff));
 router.delete("/day-offs/:id",  asyncHandler(deleteDayOff));
+
+// ── Settings ────────────────────────────────────────────────────────────────
+router.get("/settings",          asyncHandler(getSettings));
+router.patch("/settings",        asyncHandler(updateSettings));
 
 export default router;
